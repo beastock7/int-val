@@ -4,7 +4,7 @@ import pandas as pd
 
 st.set_page_config(page_title="Excel-Matched DCF Engine", layout="wide")
 
-st.markdown("## ⚙️ Hardcore DCF Engine (Excel Methodology)")
+st.markdown("Int Val")
 st.markdown("Tato aplikace přesně replikuje tvůj Excel model. Sama stáhne surová data a prožene je tvými předpoklady.")
 
 # --- SIDEBAR: PŘEDPOKLADY (Z TVÉHO EXCELU) ---
