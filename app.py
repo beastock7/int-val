@@ -5,9 +5,6 @@ import numpy as np
 
 st.set_page_config(page_title="Institutional Valuation Engine", layout="wide")
 
-st.markdown("## ⚙️ Institutional DCF Engine")
-st.markdown("Žádné grafy, jen tvrdá data. 3-Stage Fade, SBC úpravy a Duální terminální hodnota.")
-
 # --- SIDEBAR: PROFI NASTAVENÍ ---
 st.sidebar.markdown("### 1. Vstupy & Účetnictví")
 ticker = st.sidebar.text_input("Ticker", "MSFT").upper()
