@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 
 # Nastavení vzhledu stránky
 st.set_page_config(page_title="Profi DCF Valuace", layout="wide")
-st.title("Mojkatko je prditko)")
+st.title("DCF Value")
 
 # --- BOČNÍ PANEL: VSTUPY A PŘEDPOKLADY ---
 st.sidebar.header("1. Výběr společnosti")
