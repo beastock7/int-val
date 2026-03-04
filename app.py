@@ -46,14 +46,13 @@ if ticker:
             
             # Ošetření chybějících dat
             cash = bs.loc['Cash And Cash Equivalents'].iloc[0] if 'Cash And Cash Equivalents' in bs.index else 0
-            # Ke cashi přičteme krátkodobé investice, pokud tam jsou
             if 'Other Short Term Investments' in bs.index and pd.notna(bs.loc['Other Short Term Investments'].iloc[0]):
                 cash += bs.loc['Other Short Term Investments'].iloc[0]
                 
             debt = bs.loc['Total Debt'].iloc[0] if 'Total Debt' in bs.index else 0
             revenue = fin.loc['Total Revenue'].iloc[0]
             ebit = fin.loc['EBIT'].iloc[0]
-            ebitda = fin.loc['EBITDA'].iloc[0] if 'EBITDA' in fin.index else ebit * 1.2 # Odhad pokud chybí
+            ebitda = fin.loc['EBITDA'].iloc[0] if 'EBITDA' in fin.index else ebit * 1.2 
             
             current_margin = ebit / revenue if revenue > 0 else target_margin
             
@@ -70,9 +69,7 @@ if ticker:
             # 3. TVORBA 10LETÉ PROJEKCE (Fade Model)
             years = np.arange(1, 11)
             
-            # Lineární pokles růstu z Year 1 (např. 15%) na Terminal (např. 2.5%) v roce 10
             growth_rates = np.linspace(g_year_1, g_terminal, 10)
-            # Lineární přechod aktuální marže na Cílovou marži v roce 10
             margins = np.linspace(current_margin, target_margin, 10)
             
             proj_data = []
@@ -81,7 +78,6 @@ if ticker:
             for y, g, m in zip(years, growth_rates, margins):
                 curr_rev *= (1 + g)
                 curr_ebit = curr_rev * m
-                # Úprava o SBC (Stock-Based Compensation)
                 adj_ebit = curr_ebit - (curr_rev * sbc_penalty)
                 
                 nopat = adj_ebit * (1 - tax_rate)
@@ -93,7 +89,7 @@ if ticker:
                     "Růst (%)": g * 100,
                     "Tržby (Mld.)": curr_rev / 1e9,
                     "EBIT Marže (%)": m * 100,
-                    "EBITDA (Mld.)": (curr_ebit * 1.2) / 1e9, # Approx D&A addition
+                    "EBITDA (Mld.)": (curr_ebit * 1.2) / 1e9,
                     "NOPAT (Mld.)": nopat / 1e9,
                     "FCFF (Mld.)": fcff / 1e9
                 })
@@ -106,14 +102,11 @@ if ticker:
             discount_factors = np.array([(1 + wacc) ** y for y in years])
             pv_fcff = np.sum(fcff_array / discount_factors)
             
-            # Metoda 1: Perpetuity Growth
             tv_pgr = (fcff_array[-1] * (1 + g_terminal)) / (wacc - g_terminal)
             
-            # Metoda 2: Exit Multiple (EBITDA v roce 10 * EV/EBITDA násobek)
             final_ebitda = df_proj["EBITDA (Mld.)"].values[-1] * 1e9
             tv_mult = final_ebitda * exit_multiple
             
-            # Vážený průměr Terminální hodnoty
             tv_blended = (tv_pgr * tv_weight_pgr) + (tv_mult * (1 - tv_weight_pgr))
             pv_tv = tv_blended / ((1 + wacc) ** 10)
             
@@ -123,7 +116,7 @@ if ticker:
             implied_price = eq_val / shares
             mos = (implied_price - price) / implied_price if implied_price > 0 else 0
             
-            # --- VÝPIS VÝSLEDKŮ (ČISTÁ DATA) ---
+            # --- VÝPIS VÝSLEDKŮ ---
             st.markdown("---")
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Aktuální Cena", f"${price:,.2f}")
@@ -132,8 +125,8 @@ if ticker:
             c4.metric("Enterprise Value", f"${ev/1e9:,.2f} B")
             
             st.markdown("### 📊 10-Year Financial Projection Matrix")
-            # Zobrazení datové tabulky s hezkým formátováním
-            st.dataframe(df_proj.style.format("{:.2f}").background_gradient(cmap='Greens', subset=["FCFF (Mld.)"]), use_container_width=True)
+            # Tady byla ta chyba. Odstranil jsem background_gradient.
+            st.dataframe(df_proj.style.format("{:.2f}"), use_container_width=True)
             
             st.markdown("### 🔬 Rozpad Terminální Hodnoty (Terminal Value Breakdown)")
             t1, t2, t3 = st.columns(3)
