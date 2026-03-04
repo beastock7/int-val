@@ -3,8 +3,6 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 
-st.set_page_config(page_title="Institutional Valuation Engine", layout="wide")
-
 # --- SIDEBAR: PROFI NASTAVENÍ ---
 st.sidebar.markdown("### 1. Vstupy & Účetnictví")
 ticker = st.sidebar.text_input("Ticker", "MSFT").upper()
