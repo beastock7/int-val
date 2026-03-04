@@ -1,104 +1,125 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
 
-# Nastavení vzhledu stránky
-st.set_page_config(page_title="Profi DCF Valuace", layout="wide")
-st.title("DCF Value")
+st.set_page_config(page_title="Quant Valuation Model", layout="wide")
 
-# --- BOČNÍ PANEL: VSTUPY A PŘEDPOKLADY ---
-st.sidebar.header("1. Výběr společnosti")
-ticker = st.sidebar.text_input("Zadej Ticker (např. NVO, AAPL, MSFT)", "NVO").upper()
+st.sidebar.markdown("### Model Parameters")
+ticker = st.sidebar.text_input("Ticker", "AAPL").upper()
 
-st.sidebar.header("2. Valuační předpoklady")
-st.sidebar.markdown("Změň parametry a sleduj, jak trh reaguje.")
+st.sidebar.markdown("#### Cost of Capital (CAPM)")
+rf_rate = st.sidebar.number_input("Risk-Free Rate (%)", value=4.20) / 100
+erp = st.sidebar.number_input("Equity Risk Premium (%)", value=5.50) / 100
+cost_of_debt = st.sidebar.number_input("Cost of Debt (%)", value=5.00) / 100
+tax_rate = st.sidebar.number_input("Effective Tax Rate (%)", value=21.00) / 100
 
-growth_1_5 = st.sidebar.slider("Růst tržeb (Roky 1-5)", min_value=-0.10, max_value=0.50, value=0.08, step=0.01)
-growth_6_10 = st.sidebar.slider("Růst tržeb (Roky 6-10)", min_value=-0.05, max_value=0.20, value=0.04, step=0.01)
-target_margin = st.sidebar.slider("Cílová EBIT marže", min_value=0.05, max_value=0.60, value=0.35, step=0.01)
-wacc = st.sidebar.slider("Diskontní sazba (WACC)", min_value=0.05, max_value=0.15, value=0.08, step=0.005)
+st.sidebar.markdown("#### Growth Assumptions")
+g_stage1 = st.sidebar.number_input("Stage 1 Growth (Y1-5) (%)", value=10.0) / 100
+g_stage2 = st.sidebar.number_input("Stage 2 Growth (Y6-10) (%)", value=5.0) / 100
+g_terminal = st.sidebar.number_input("Terminal Growth (%)", value=2.5) / 100
+target_margin = st.sidebar.number_input("Target EBIT Margin (%)", value=25.0) / 100
+reinvestment_rate = st.sidebar.number_input("Reinvestment Rate (%)", value=15.0) / 100
 
-tax_rate = 0.21
-reinvestment_rate = 0.15
-terminal_growth = 0.025
-
-# --- HLAVNÍ ČÁST: STAŽENÍ DAT A VÝPOČET ---
 if ticker:
-    with st.spinner(f"Stahuji data pro {ticker} a počítám komplexní DCF..."):
-        try:
+    try:
+        with st.spinner("Executing quantitative valuation model..."):
             stock = yf.Ticker(ticker)
             info = stock.info
             
-            current_price = info.get('currentPrice', 0)
+            price = info.get('currentPrice', info.get('regularMarketPrice', 0))
             shares = info.get('sharesOutstanding', 1)
+            beta = info.get('beta', 1.0)
             
-            # Bezpečné stažení účetních dat
             bs = stock.balance_sheet
             fin = stock.financials
             
             cash = bs.loc['Cash And Cash Equivalents'].iloc[0] if 'Cash And Cash Equivalents' in bs.index else 0
             debt = bs.loc['Total Debt'].iloc[0] if 'Total Debt' in bs.index else 0
             revenue = fin.loc['Total Revenue'].iloc[0]
-            ebit = fin.loc['EBIT'].iloc[0]
             
-            # Výpočet DCF
-            years = list(range(1, 11))
-            revenues = []
-            fcffs = []
-            pv_fcffs = []
+            equity_val_market = price * shares
+            total_cap = equity_val_market + debt
+            w_e = equity_val_market / total_cap if total_cap > 0 else 1
+            w_d = debt / total_cap if total_cap > 0 else 0
             
-            proj_revenue = revenue
-            for year in years:
-                if year <= 5:
-                    proj_revenue *= (1 + growth_1_5)
-                else:
-                    proj_revenue *= (1 + growth_6_10)
-                
-                proj_ebit = proj_revenue * target_margin
-                nopat = proj_ebit * (1 - tax_rate)
-                reinvestment = proj_revenue * reinvestment_rate
-                fcff = nopat - reinvestment
-                
-                pv = fcff / ((1 + wacc) ** year)
-                
-                revenues.append(proj_revenue)
-                fcffs.append(fcff)
-                pv_fcffs.append(pv)
+            ke = rf_rate + (beta * erp)
+            kd = cost_of_debt * (1 - tax_rate)
+            wacc = (w_e * ke) + (w_d * kd)
             
-            # Terminální hodnota
-            tv = (fcffs[-1] * (1 + terminal_growth)) / (wacc - terminal_growth)
+            years = np.arange(1, 11)
+            rev_proj = []
+            fcff_proj = []
+            
+            curr_rev = revenue
+            for y in years:
+                curr_rev *= (1 + g_stage1) if y <= 5 else (1 + g_stage2)
+                ebit = curr_rev * target_margin
+                nopat = ebit * (1 - tax_rate)
+                reinv = curr_rev * reinvestment_rate
+                fcff = nopat - reinv
+                
+                rev_proj.append(curr_rev)
+                fcff_proj.append(fcff)
+                
+            tv = (fcff_proj[-1] * (1 + g_terminal)) / (wacc - g_terminal)
+            
+            discount_factors = np.array([(1 + wacc) ** y for y in years])
+            pv_fcff = np.sum(np.array(fcff_proj) / discount_factors)
             pv_tv = tv / ((1 + wacc) ** 10)
             
-            # Finální cena
-            enterprise_value = sum(pv_fcffs) + pv_tv
-            equity_value = enterprise_value + cash - debt
-            fair_value = equity_value / shares
-            
-            margin_of_safety = ((fair_value - current_price) / fair_value) * 100
-            
-            # --- VYKRESLENÍ VÝSLEDKŮ ---
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Aktuální tržní cena", f"${current_price:,.2f}")
-            col2.metric("Tvoje Vnitřní hodnota (Fair Value)", f"${fair_value:,.2f}", f"{margin_of_safety:.1f}% Margin of Safety")
-            col3.metric("Očekávané tržby v 10. roce", f"${revenues[-1]/1e9:,.1f} Mld.")
+            ev = pv_fcff + pv_tv
+            eq_val_intrinsic = ev + cash - debt
+            implied_price = eq_val_intrinsic / shares
+            mos = (implied_price - price) / implied_price if implied_price > 0 else 0
 
-            # Interaktivní graf (Plotly)
-            fig = go.Figure()
-            fig.add_trace(go.Bar(x=years, y=fcffs, name="Volné Cash Flow (FCFF)", marker_color='#2ca02c'))
-            fig.add_trace(go.Scatter(x=years, y=revenues, name="Projekce Tržeb", mode='lines+markers', yaxis='y2', line=dict(color='#1f77b4', width=3)))
+            st.markdown(f"## {ticker} | Advanced DCF & Sensitivity Analysis")
             
-            fig.update_layout(
-                title=f"Projekce růstu a hotovosti na 10 let ({ticker})",
-                xaxis=dict(title="Roky do budoucnosti"),
-                yaxis=dict(title="Cash Flow (USD)", side='left'),
-                yaxis2=dict(title="Tržby (USD)", side='right', overlaying='y'),
-                hovermode="x unified",
-                template="plotly_white"
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-            st.success("Tento model bere v úvahu obří komplexitu: 2-fázový růst tržeb, kompresi marží, reinvestiční potřeby, daně a časovou hodnotu peněz. To vše přepočítáno v reálném čase.")
-
-        except Exception as e:
-            st.error(f"Chyba při stahování dat: Omlouváme se, některá účetní data chybí nebo je Ticker špatně zadán. Detaily: {e}")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Current Market Price", f"${price:,.2f}")
+            c2.metric("Implied Fair Value", f"${implied_price:,.2f}", f"{mos*100:.1f}% MoS")
+            c3.metric("Implied WACC", f"{wacc*100:.2f}%", f"Beta: {beta}")
+            c4.metric("Enterprise Value", f"${ev/1e9:,.2f}B")
+            
+            st.markdown("---")
+            
+            col_chart, col_matrix = st.columns((1, 1))
+            
+            with col_chart:
+                st.markdown("### 10-Year FCFF Projection")
+                fig_bar = go.Figure()
+                fig_bar.add_trace(go.Bar(x=years, y=fcff_proj, marker_color='#1f77b4', name='FCFF'))
+                fig_bar.update_layout(template="plotly_white", margin=dict(l=0, r=0, t=30, b=0))
+                st.plotly_chart(fig_bar, use_container_width=True)
+            
+            with col_matrix:
+                st.markdown("### Valuation Sensitivity Matrix")
+                wacc_range = np.linspace(max(0.01, wacc - 0.02), wacc + 0.02, 5)
+                tg_range = np.linspace(max(0.0, g_terminal - 0.01), g_terminal + 0.01, 5)
+                
+                matrix = np.zeros((5, 5))
+                for i, w in enumerate(wacc_range):
+                    for j, g in enumerate(tg_range):
+                        if w <= g:
+                            matrix[i, j] = np.nan
+                            continue
+                        m_tv = (fcff_proj[-1] * (1 + g)) / (w - g)
+                        m_pv_tv = m_tv / ((1 + w) ** 10)
+                        m_dfs = np.array([(1 + w) ** y for y in years])
+                        m_pv_fcff = np.sum(np.array(fcff_proj) / m_dfs)
+                        m_ev = m_pv_fcff + m_pv_tv
+                        m_eq = m_ev + cash - debt
+                        matrix[i, j] = m_eq / shares
+                        
+                fig_sens = px.imshow(matrix, 
+                                     labels=dict(x="Terminal Growth Rate", y="Discount Rate (WACC)", color="Fair Value"),
+                                     x=[f"{g*100:.1f}%" for g in tg_range],
+                                     y=[f"{w*100:.1f}%" for w in wacc_range],
+                                     text_auto=".2f", aspect="auto", color_continuous_scale="RdYlGn")
+                fig_sens.update_layout(margin=dict(l=0, r=0, t=30, b=0))
+                st.plotly_chart(fig_sens, use_container_width=True)
+            
+    except Exception as e:
+        st.error(f"Valuation exception triggered. Verify ticker symbol and data availability. Deep log: {e}")
