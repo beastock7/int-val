@@ -1,133 +1,126 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
 
-# --- SIDEBAR: PROFI NASTAVENÍ ---
-st.sidebar.markdown("### 1. Vstupy & Účetnictví")
-ticker = st.sidebar.text_input("Ticker", "MSFT").upper()
-shares_override = st.sidebar.number_input("Akcie v oběhu (Mld. ks) - 0 pro auto", value=0.0)
+st.set_page_config(page_title="Excel-Matched DCF Engine", layout="wide")
 
-st.sidebar.markdown("### 2. Valuační Předpoklady")
-g_year_1 = st.sidebar.number_input("Růst tržeb (Rok 1) %", value=15.0) / 100
-target_margin = st.sidebar.number_input("Cílová EBIT marže (Rok 10) %", value=35.0) / 100
-sbc_penalty = st.sidebar.number_input("SBC jako % z tržeb (Náklad)", value=2.0) / 100
-tax_rate = st.sidebar.number_input("Efektivní daň (%)", value=18.0) / 100
-reinvestment_rate = st.sidebar.number_input("Reinvestiční poměr (CapEx-D&A) %", value=15.0) / 100
+st.markdown("## ⚙️ Hardcore DCF Engine (Excel Methodology)")
+st.markdown("Tato aplikace přesně replikuje tvůj Excel model. Sama stáhne surová data a prožene je tvými předpoklady.")
 
-st.sidebar.markdown("### 3. Kapitál & Riziko (WACC)")
-rf_rate = st.sidebar.number_input("Bezriziková sazba (10Y Bond) %", value=4.2) / 100
-erp = st.sidebar.number_input("Market Risk Premium %", value=5.5) / 100
-cost_of_debt = st.sidebar.number_input("Náklad na dluh %", value=5.0) / 100
+# --- SIDEBAR: PŘEDPOKLADY (Z TVÉHO EXCELU) ---
+st.sidebar.markdown("### 1. Výběr akcie")
+ticker = st.sidebar.text_input("Ticker", "NVO").upper()
 
-st.sidebar.markdown("### 4. Terminální Hodnota")
-g_terminal = st.sidebar.number_input("Perpetuity Growth Rate %", value=2.5) / 100
-exit_multiple = st.sidebar.number_input("Exit EV/EBITDA Multiple", value=18.0)
-tv_weight_pgr = st.sidebar.slider("Váha PGR modelu vůči Exit Multiple", 0.0, 1.0, 0.5)
+st.sidebar.markdown("### 2. Předpoklady růstu")
+g_1_to_5 = st.sidebar.number_input("Růst tržeb (Rok 1-5) %", value=0.0) / 100
+g_6_to_10 = st.sidebar.number_input("Růst tržeb (Rok 6-10) %", value=3.0) / 100
+ebit_margin = st.sidebar.number_input("Cílová EBIT marže %", value=44.02) / 100
+reinv_rate = st.sidebar.number_input("Reinvestiční poměr (z tržeb) %", value=15.0) / 100
+tax_rate = st.sidebar.number_input("Efektivní daň (%)", value=21.0) / 100
+g_terminal = st.sidebar.number_input("Terminální růst (%)", value=2.5) / 100
+
+st.sidebar.markdown("### 3. Náklady kapitálu (WACC)")
+rf_rate = st.sidebar.number_input("Bezriziková sazba %", value=4.2) / 100
+erp = st.sidebar.number_input("Prémie za riziko (ERP) %", value=5.5) / 100
+cost_of_debt_raw = st.sidebar.number_input("Úroková sazba dluhu %", value=5.0) / 100
 
 if ticker:
     try:
-        with st.spinner("Sestavuji datový model..."):
-            # 1. STAŽENÍ DAT
+        with st.spinner(f"Stahuji surová data pro {ticker} a počítám DCF..."):
+            # 1. STAŽENÍ HRUBÝCH DAT Z WEBU
             stock = yf.Ticker(ticker)
             info = stock.info
-            
-            price = info.get('currentPrice', info.get('regularMarketPrice', 0))
-            beta = info.get('beta', 1.0)
-            shares = shares_override * 1e9 if shares_override > 0 else info.get('sharesOutstanding', 1)
-            
             bs = stock.balance_sheet
             fin = stock.financials
             
-            # Ošetření chybějících dat
+            # 2. OČIŠTĚNÁ TRŽNÍ DATA
+            price = info.get('currentPrice', info.get('regularMarketPrice', 0))
+            shares = info.get('sharesOutstanding', 1)
+            beta = info.get('beta', 1.0)
+            market_cap = price * shares
+            
+            # 3. ÚČETNÍ VSTUPY
             cash = bs.loc['Cash And Cash Equivalents'].iloc[0] if 'Cash And Cash Equivalents' in bs.index else 0
             if 'Other Short Term Investments' in bs.index and pd.notna(bs.loc['Other Short Term Investments'].iloc[0]):
                 cash += bs.loc['Other Short Term Investments'].iloc[0]
                 
             debt = bs.loc['Total Debt'].iloc[0] if 'Total Debt' in bs.index else 0
-            revenue = fin.loc['Total Revenue'].iloc[0]
-            ebit = fin.loc['EBIT'].iloc[0]
-            ebitda = fin.loc['EBITDA'].iloc[0] if 'EBITDA' in fin.index else ebit * 1.2 
+            revenue = fin.loc['Total Revenue'].iloc[0] if 'Total Revenue' in fin.index else 0
+            ebit = fin.loc['EBIT'].iloc[0] if 'EBIT' in fin.index else 0
             
-            current_margin = ebit / revenue if revenue > 0 else target_margin
-            
-            # 2. VÝPOČET WACC
-            equity_val_market = price * shares
-            total_cap = equity_val_market + debt
-            w_e = equity_val_market / total_cap if total_cap > 0 else 1
-            w_d = debt / total_cap if total_cap > 0 else 0
-            
+            # 4. VÝPOČET WACC (Přesně podle Excelu)
             ke = rf_rate + (beta * erp)
-            kd = cost_of_debt * (1 - tax_rate)
+            kd = cost_of_debt_raw * (1 - tax_rate)
+            
+            w_e = market_cap / (market_cap + debt) if (market_cap + debt) > 0 else 1
+            w_d = debt / (market_cap + debt) if (market_cap + debt) > 0 else 0
+            
             wacc = (w_e * ke) + (w_d * kd)
             
-            # 3. TVORBA 10LETÉ PROJEKCE (Fade Model)
-            years = np.arange(1, 11)
-            
-            growth_rates = np.linspace(g_year_1, g_terminal, 10)
-            margins = np.linspace(current_margin, target_margin, 10)
-            
+            # 5. PROJEKCE TRŽEB A FCFF
             proj_data = []
-            curr_rev = revenue
+            pv_fcff_total = 0
+            current_rev = revenue
             
-            for y, g, m in zip(years, growth_rates, margins):
-                curr_rev *= (1 + g)
-                curr_ebit = curr_rev * m
-                adj_ebit = curr_ebit - (curr_rev * sbc_penalty)
+            for year in range(1, 11):
+                # Fáze růstu
+                if year <= 5:
+                    current_rev *= (1 + g_1_to_5)
+                else:
+                    current_rev *= (1 + g_6_to_10)
+                    
+                # Výpočet FCFF: EBIT*(1-t) - Reinvestice
+                current_ebit = current_rev * ebit_margin
+                nopat = current_ebit * (1 - tax_rate)
+                reinvestment = current_rev * reinv_rate
+                fcff = nopat - reinvestment
                 
-                nopat = adj_ebit * (1 - tax_rate)
-                reinv = curr_rev * reinvestment_rate
-                fcff = nopat - reinv
+                # Diskontování
+                discount_factor = (1 + wacc) ** year
+                pv_fcff = fcff / discount_factor
+                pv_fcff_total += pv_fcff
                 
                 proj_data.append({
-                    "Rok": y,
-                    "Růst (%)": g * 100,
-                    "Tržby (Mld.)": curr_rev / 1e9,
-                    "EBIT Marže (%)": m * 100,
-                    "EBITDA (Mld.)": (curr_ebit * 1.2) / 1e9,
-                    "NOPAT (Mld.)": nopat / 1e9,
-                    "FCFF (Mld.)": fcff / 1e9
+                    "Rok": year,
+                    "Tržby": current_rev,
+                    "EBIT": current_ebit,
+                    "NOPAT": nopat,
+                    "Reinvestice": reinvestment,
+                    "FCFF": fcff,
+                    "PV FCFF": pv_fcff
                 })
                 
             df_proj = pd.DataFrame(proj_data)
             df_proj.set_index("Rok", inplace=True)
             
-            # 4. DISKONTOVÁNÍ A TERMINÁLNÍ HODNOTA
-            fcff_array = df_proj["FCFF (Mld.)"].values * 1e9
-            discount_factors = np.array([(1 + wacc) ** y for y in years])
-            pv_fcff = np.sum(fcff_array / discount_factors)
+            # 6. TERMINÁLNÍ HODNOTA A VALUACE
+            last_fcff = df_proj.iloc[9]["FCFF"]
+            tv = (last_fcff * (1 + g_terminal)) / (wacc - g_terminal)
+            pv_tv = tv / ((1 + wacc) ** 10)
             
-            tv_pgr = (fcff_array[-1] * (1 + g_terminal)) / (wacc - g_terminal)
-            
-            final_ebitda = df_proj["EBITDA (Mld.)"].values[-1] * 1e9
-            tv_mult = final_ebitda * exit_multiple
-            
-            tv_blended = (tv_pgr * tv_weight_pgr) + (tv_mult * (1 - tv_weight_pgr))
-            pv_tv = tv_blended / ((1 + wacc) ** 10)
-            
-            # 5. ENTERPRISE A EQUITY VALUE
-            ev = pv_fcff + pv_tv
-            eq_val = ev + cash - debt
-            implied_price = eq_val / shares
-            mos = (implied_price - price) / implied_price if implied_price > 0 else 0
+            enterprise_value = pv_fcff_total + pv_tv
+            equity_value = enterprise_value + cash - debt
+            fair_value = equity_value / shares
+            mos = ((fair_value - price) / fair_value) * 100 if fair_value > 0 else 0
             
             # --- VÝPIS VÝSLEDKŮ ---
             st.markdown("---")
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Aktuální Cena", f"${price:,.2f}")
-            c2.metric("Vnitřní Hodnota (Blended)", f"${implied_price:,.2f}", f"{mos*100:.1f}% Margin of Safety")
-            c3.metric("WACC (Diskontní sazba)", f"{wacc*100:.2f}%", f"Beta: {beta}")
-            c4.metric("Enterprise Value", f"${ev/1e9:,.2f} B")
+            c1.metric("Aktuální tržní cena", f"${price:,.2f}")
+            c2.metric("Vnitřní hodnota (Fair Value)", f"${fair_value:,.2f}", f"{mos:.2f}% Margin of Safety")
+            c3.metric("WACC (Diskontní sazba)", f"{wacc*100:.2f}%", f"Beta z webu: {beta:.2f}")
+            c4.metric("Aktuální tržby (12M)", f"${revenue/1e9:,.2f} B")
             
-            st.markdown("### 📊 10-Year Financial Projection Matrix")
-            # Tady byla ta chyba. Odstranil jsem background_gradient.
-            st.dataframe(df_proj.style.format("{:.2f}"), use_container_width=True)
+            # Tabulka s daty
+            st.markdown("### 📊 10letá projekce Cash Flow (Excel logika)")
+            st.dataframe(df_proj.style.format("{:,.0f}"), use_container_width=True)
             
-            st.markdown("### 🔬 Rozpad Terminální Hodnoty (Terminal Value Breakdown)")
-            t1, t2, t3 = st.columns(3)
-            t1.metric("Hodnota přes PGR Model", f"${(tv_pgr / ((1 + wacc)**10))/1e9:,.2f} B", f"Váha: {tv_weight_pgr*100}%")
-            t2.metric("Hodnota přes Exit Multiple", f"${(tv_mult / ((1 + wacc)**10))/1e9:,.2f} B", f"Váha: {(1-tv_weight_pgr)*100}%")
-            t3.metric("Současná hodnota hotovosti 1-10 let", f"${pv_fcff/1e9:,.2f} B")
-            
+            st.markdown("### 🔬 Rozpad hodnoty podniku")
+            t1, t2, t3, t4 = st.columns(4)
+            t1.metric("Současná hodnota hotovosti (1-10 let)", f"${pv_fcff_total/1e9:,.2f} B")
+            t2.metric("Současná Terminální hodnota (PV TV)", f"${pv_tv/1e9:,.2f} B")
+            t3.metric("Hotovost a ekvivalenty z rozvahy", f"${cash/1e9:,.2f} B")
+            t4.metric("Celkový dluh z rozvahy", f"${debt/1e9:,.2f} B")
+
     except Exception as e:
-        st.error(f"Chyba při výpočtu. Data pro tento ticker možná chybí v DB. Log: {e}")
+        st.error(f"Chyba při stahování dat nebo výpočtu. Ujistěte se, že Ticker existuje. Detail chyby: {e}")
