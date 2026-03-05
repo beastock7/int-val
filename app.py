@@ -3,7 +3,7 @@ import pandas as pd
 
 st.set_page_config(page_title="Excel-Matched DCF", layout="wide")
 
-st.title(" DCF Excel")
+st.title("DCF")
 
 def parse_input(val):
     try:
@@ -13,7 +13,7 @@ def parse_input(val):
         return 0.0
 
 # --- SIDEBAR: VSTUPY ---
-st.sidebar.header("1. Surová data z Excelu")
+st.sidebar.header("Data")
 st.sidebar.caption("Zadávej celá čísla včetně nul (např. 3370000000).")
 
 price_input = st.sidebar.text_input("Aktuální cena", "38.33")
