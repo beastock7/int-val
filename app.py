@@ -94,12 +94,12 @@ if shares > 0 and revenue > 0:
     
     # --- VÝSTUP ---
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Zadaná cena z Excelu", f"${price:,.2f}")
+    c1.metric("Aktuální cena", f"${price:,.2f}")
     c2.metric("Vnitřní hodnota (Fair Value)", f"${fair_value:,.2f}", f"{mos:.2f}% Margin of Safety")
     c3.metric("WACC (Diskontní sazba)", f"{wacc*100:.2f}%")
     c4.metric("Market Cap", f"${market_cap/1e9:,.2f} B")
     
-    st.markdown("### 📊 10letá projekce Cash Flow")
+    st.markdown("### Projekce Cash Flow")
     st.dataframe(df_proj.style.format("{:,.0f}"), use_container_width=True)
 
 else:
