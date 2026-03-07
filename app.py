@@ -96,11 +96,11 @@ if st.button("Spočítat Férovou Cenu", type="primary"):
                 pv_of_ufcf = ufcf * discount_factor
                 sum_pv_ufcf += pv_of_ufcf
                 
-                df_display.at['Tržby', f"Rok {y}"] = f"${current_revenue/1e9:.2f}"
-                df_display.at['EBITDA', f"Rok {y}"] = f"${ebitda/1e9:.2f}"
-                df_display.at['NOPAT', f"Rok {y}"] = f"${nopat/1e9:.2f}"
-                df_display.at['FCF', f"Rok {y}"] = f"${ufcf/1e9:.2f}"
-                df_display.at['Současná hodnota FCF', f"Rok {y}"] = f"${pv_of_ufcf/1e9:.2f}"
+                df_display.at['Tržby', f"Rok {year}"] = f"${current_revenue/1e9:.2f}"
+                df_display.at['EBITDA', f"Rok {year}"] = f"${ebitda/1e9:.2f}"
+                df_display.at['NOPAT', f"Rok {year}"] = f"${nopat/1e9:.2f}"
+                df_display.at['FCF', f"Rok {year}"] = f"${ufcf/1e9:.2f}"
+                df_display.at['Současná hodnota FCF', f"Rok {year}"] = f"${pv_of_ufcf/1e9:.2f}"
                 
                 last_revenue = current_revenue
                 if year == 5:
