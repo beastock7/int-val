@@ -1,106 +1,124 @@
 import streamlit as st
+import yfinance as yf
 import pandas as pd
 
-st.set_page_config(page_title="Excel-Matched DCF", layout="wide")
+# Nastavení vzhledu stránky
+st.set_page_config(page_title="Můj DCF Kalkulátor", layout="wide")
+st.title("📈 Vlastní DCF Kalkulátor (Gordon Growth)")
+st.markdown("Tato aplikace stahuje živá data z Yahoo Finance a počítá vnitřní hodnotu akcie.")
 
-st.title("DCF")
+# --- BOČNÍ PANEL (SIDEBAR) PRO VSTUPY ---
+st.sidebar.header("1. Výběr akcie")
+ticker_symbol = st.sidebar.text_input("Zadejte Ticker (např. NVO, AAPL, MSFT):", "NVO").upper()
 
-def parse_input(val):
-    try:
-        # Odstraní mezery a nahradí české čárky za tečky
-        return float(val.replace(" ", "").replace(",", "."))
-    except:
-        return 0.0
+st.sidebar.header("2. Nastavení (Assumptions)")
+wacc = st.sidebar.slider("Diskontní sazba (WACC) %", 5.0, 15.0, 8.0, 0.5) / 100
+terminal_growth = st.sidebar.slider("Terminální růst %", 0.0, 5.0, 2.0, 0.5) / 100
+ebitda_margin = st.sidebar.slider("EBITDA Marže %", 5.0, 80.0, 48.0, 1.0) / 100
+tax_rate = st.sidebar.slider("Daňová sazba %", 0.0, 40.0, 21.0, 1.0) / 100
 
-# --- SIDEBAR: VSTUPY ---
-st.sidebar.header("Data")
-st.sidebar.caption("Zadávej celá čísla včetně nul (např. 3370000000).")
+st.sidebar.subheader("Očekávaný růst tržeb")
+g1 = st.sidebar.number_input("Rok 1 (%)", value=15.0) / 100
+g2 = st.sidebar.number_input("Rok 2 (%)", value=12.0) / 100
+g3 = st.sidebar.number_input("Rok 3 (%)", value=10.0) / 100
+g4 = st.sidebar.number_input("Rok 4 (%)", value=8.0) / 100
+g5 = st.sidebar.number_input("Rok 5 (%)", value=6.0) / 100
+revenue_growth = [g1, g2, g3, g4, g5]
 
-price_input = st.sidebar.text_input("Aktuální cena", "38.33")
-shares_input = st.sidebar.text_input("Akcie v oběhu", "3370000000")
-cash_input = st.sidebar.text_input("Hotovost a ekv.", "4260000000")
-debt_input = st.sidebar.text_input("Celkový dluh", "20680000000")
-rev_input = st.sidebar.text_input("Tržby za 12M", "46790000000")
-beta_input = st.sidebar.text_input("Beta", "0.76")
+# Fixní parametry (pro jednoduchost, lze z nich také udělat posuvníky)
+dna_percent = 0.04
+capex_percent = 0.08
+nwc_percent = 0.01
 
-st.sidebar.header("2. Předpoklady (Zadávej v %)")
-g_1_to_5 = st.sidebar.number_input("Růst tržeb (Rok 1-5) %", value=0.0) / 100
-g_6_to_10 = st.sidebar.number_input("Růst tržeb (Rok 6-10) %", value=3.0) / 100
-ebit_margin = st.sidebar.number_input("Cílová EBIT marže %", value=44.02) / 100
-reinv_rate = st.sidebar.number_input("Reinvestiční poměr %", value=15.0) / 100
-tax_rate = st.sidebar.number_input("Efektivní daň %", value=21.0) / 100
-g_terminal = st.sidebar.number_input("Terminální růst %", value=2.5) / 100
-
-st.sidebar.header("3. WACC parametry")
-rf_rate = st.sidebar.number_input("Bezriziková sazba %", value=4.2) / 100
-erp = st.sidebar.number_input("Prémie za riziko %", value=5.5) / 100
-cost_of_debt_raw = st.sidebar.number_input("Úroková sazba dluhu %", value=5.0) / 100
-
-# --- VÝPOČET ---
-price = parse_input(price_input)
-shares = parse_input(shares_input)
-cash = parse_input(cash_input)
-debt = parse_input(debt_input)
-revenue = parse_input(rev_input)
-beta = parse_input(beta_input)
-
-if shares > 0 and revenue > 0:
-    # WACC
-    market_cap = price * shares
-    ke = rf_rate + (beta * erp)
-    kd = cost_of_debt_raw * (1 - tax_rate)
-    
-    w_e = market_cap / (market_cap + debt)
-    w_d = debt / (market_cap + debt)
-    wacc = (w_e * ke) + (w_d * kd)
-    
-    # PROJEKCE
-    proj_data = []
-    pv_fcff_total = 0
-    current_rev = revenue
-    
-    for year in range(1, 11):
-        if year <= 5:
-            current_rev *= (1 + g_1_to_5)
+# --- HLAVNÍ LOGIKA APLIKACE ---
+if st.button("Spočítat Férovou Cenu", type="primary"):
+    with st.spinner(f'Stahuji data pro {ticker_symbol}...'):
+        ticker = yf.Ticker(ticker_symbol)
+        info = ticker.info
+        
+        # Získání dat (s ošetřením, pokud API něco nevrátí)
+        current_price = info.get('currentPrice', 0)
+        shares_out = info.get('sharesOutstanding', 0)
+        total_cash = info.get('totalCash', 0)
+        total_debt = info.get('totalDebt', 0)
+        ttm_revenue = info.get('totalRevenue', 0)
+        
+        if ttm_revenue == 0 or shares_out == 0:
+            st.error("Chyba: Nepodařilo se stáhnout finanční data. Zkuste jiný ticker.")
         else:
-            current_rev *= (1 + g_6_to_10)
+            # Zobrazení stažených dat
+            st.subheader(f"Základní data z rozvahy: {ticker_symbol}")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Aktuální cena", f"${current_price}")
+            col2.metric("Hotovost (Cash)", f"${total_cash/1e9:.2f} mld")
+            col3.metric("Dluh (Debt)", f"${total_debt/1e9:.2f} mld")
+            col4.metric("Tržby (TTM)", f"${ttm_revenue/1e9:.2f} mld")
             
-        current_ebit = current_rev * ebit_margin
-        nopat = current_ebit * (1 - tax_rate)
-        reinvestment = current_rev * reinv_rate
-        fcff = nopat - reinvestment
-        
-        pv_fcff = fcff / ((1 + wacc) ** year)
-        pv_fcff_total += pv_fcff
-        
-        proj_data.append({
-            "Rok": year, 
-            "Tržby": current_rev, 
-            "FCFF": fcff, 
-            "PV FCFF": pv_fcff
-        })
-        
-    df_proj = pd.DataFrame(proj_data).set_index("Rok")
-    
-    # TERMINÁLNÍ HODNOTA A FINÁLNÍ CENA
-    last_fcff = df_proj.iloc[9]["FCFF"]
-    tv = (last_fcff * (1 + g_terminal)) / (wacc - g_terminal)
-    pv_tv = tv / ((1 + wacc) ** 10)
-    
-    enterprise_value = pv_fcff_total + pv_tv
-    equity_value = enterprise_value + cash - debt
-    fair_value = equity_value / shares
-    mos = ((fair_value - price) / fair_value) * 100 if fair_value > 0 else 0
-    
-    # --- VÝSTUP ---
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Aktuální cena", f"${price:,.2f}")
-    c2.metric("Vnitřní hodnota (Fair Value)", f"${fair_value:,.2f}", f"{mos:.2f}% Margin of Safety")
-    c3.metric("WACC (Diskontní sazba)", f"{wacc*100:.2f}%")
-    c4.metric("Market Cap", f"${market_cap/1e9:,.2f} B")
-    
-    st.markdown("### Projekce Cash Flow")
-    st.dataframe(df_proj.style.format("{:,.0f}"), use_container_width=True)
+            # --- VÝPOČET DCF ---
+            years = [1, 2, 3, 4, 5]
+            last_revenue = ttm_revenue
+            
+            sum_pv_ufcf = 0
+            final_year_ufcf = 0
+            discount_factor_5 = 0
+            
+            # Tabulka pro zobrazení
+            df_display = pd.DataFrame(index=['Tržby', 'EBITDA', 'NOPAT', 'FCF', 'Současná hodnota FCF'], columns=[f"Rok {y}" for y in years])
 
-else:
-    st.warning("Zadej do levého panelu platná čísla z Excelu, aby mohl výpočet začít.")
+            for year in years:
+                # Tržby a marže
+                current_revenue = last_revenue * (1 + revenue_growth[year-1])
+                ebitda = current_revenue * ebitda_margin
+                dna = current_revenue * dna_percent
+                ebit = ebitda - dna
+                taxes = ebit * tax_rate
+                nopat = ebit - taxes
+                
+                # Free Cash Flow
+                capex = current_revenue * capex_percent
+                nwc_change = current_revenue * nwc_percent
+                ufcf = nopat + dna - capex - nwc_change
+                
+                # Diskontování
+                discount_factor = 1 / ((1 + wacc) ** (year - 0.5))
+                pv_of_ufcf = ufcf * discount_factor
+                sum_pv_ufcf += pv_of_ufcf
+                
+                # Uložení do tabulky (v miliardách pro přehlednost)
+                df_display.at['Tržby', f"Rok {y}"] = f"${current_revenue/1e9:.2f}"
+                df_display.at['EBITDA', f"Rok {y}"] = f"${ebitda/1e9:.2f}"
+                df_display.at['NOPAT', f"Rok {y}"] = f"${nopat/1e9:.2f}"
+                df_display.at['FCF', f"Rok {y}"] = f"${ufcf/1e9:.2f}"
+                df_display.at['Současná hodnota FCF', f"Rok {y}"] = f"${pv_of_ufcf/1e9:.2f}"
+                
+                last_revenue = current_revenue
+                if year == 5:
+                    final_year_ufcf = ufcf
+                    discount_factor_5 = discount_factor
+
+            # Terminální hodnota
+            terminal_value = (final_year_ufcf * (1 + terminal_growth)) / (wacc - terminal_growth)
+            pv_terminal_value = terminal_value * discount_factor_5
+            
+            # Celková hodnota
+            enterprise_value = sum_pv_ufcf + pv_terminal_value
+            equity_value = enterprise_value + total_cash - total_debt
+            fair_value_per_share = equity_value / shares_out
+            
+            # --- ZOBRAZENÍ VÝSLEDKŮ ---
+            st.divider()
+            st.subheader("Výsledek Ocenění")
+            
+            margin_of_safety = ((fair_value_per_share - current_price) / current_price) * 100
+            
+            res_col1, res_col2, res_col3 = st.columns(3)
+            res_col1.metric("Vypočítaná Férová Cena", f"${fair_value_per_share:.2f}")
+            res_col2.metric("Aktuální cena na burze", f"${current_price:.2f}")
+            
+            if margin_of_safety > 0:
+                res_col3.metric("Bezpečnostní polštář (Sleva)", f"{margin_of_safety:.1f} %", "Podhodnoceno")
+            else:
+                res_col3.metric("Přirážka", f"{abs(margin_of_safety):.1f} %", "-Nadhodnoceno")
+            
+            st.markdown("### Detail pětileté projekce (v miliardách USD)")
+            st.dataframe(df_display, use_container_width=True)
